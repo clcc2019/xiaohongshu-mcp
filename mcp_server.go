@@ -76,21 +76,41 @@ type FavoriteFeedArgs struct {
 	Unfavorite bool   `json:"unfavorite,omitempty" jsonschema:"是否取消收藏，true为取消收藏，false或未设置则为收藏"`
 }
 
+// 财联社相关参数定义
+
+// FetchCailiansheNewsArgs 获取财联社新闻参数
+type FetchCailiansheNewsArgs struct {
+	Limit       int  `json:"limit,omitempty" jsonschema:"获取数量限制，0或不设置表示获取所有新闻"`
+	FetchDetail bool `json:"fetch_detail,omitempty" jsonschema:"是否获取详细内容，默认false只获取摘要"`
+}
+
+// SearchCailiansheNewsArgs 搜索财联社新闻参数
+type SearchCailiansheNewsArgs struct {
+	Keyword string `json:"keyword" jsonschema:"搜索关键词"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"获取数量限制，0或不设置表示获取所有搜索结果"`
+}
+
+// StartCailiansheSchedulerArgs 启动财联社定时任务参数
+type StartCailiansheSchedulerArgs struct {
+	IntervalMinutes int `json:"interval_minutes,omitempty" jsonschema:"定时间隔（分钟），默认5分钟"`
+}
+
 // InitMCPServer 初始化 MCP Server
 func InitMCPServer(appServer *AppServer) *mcp.Server {
 	// 创建 MCP Server
 	server := mcp.NewServer(
 		&mcp.Implementation{
-			Name:    "xiaohongshu-mcp",
-			Version: "2.0.0",
+			Name:    "cailianshe-mcp",
+			Version: "1.0.0",
 		},
 		nil,
 	)
 
-	// 注册所有工具
+	// 注册所有工具（财联社优先，然后是小红书）
+	registerCailiansheTools(server, appServer)
 	registerTools(server, appServer)
 
-	logrus.Info("MCP Server initialized with official SDK")
+	logrus.Info("MCP Server initialized with official SDK (Cailianshe + Xiaohongshu)")
 
 	return server
 }
@@ -338,4 +358,94 @@ func convertStringsToInterfaces(strs []string) []interface{} {
 		result[i] = s
 	}
 	return result
+}
+
+// registerCailiansheTools 注册财联社相关工具
+func registerCailiansheTools(server *mcp.Server, appServer *AppServer) {
+	// 工具 1: 获取最新财联社新闻
+	mcp.AddTool(server,
+		&mcp.Tool{
+			Name:        "fetch_cailianshe_news",
+			Description: "获取财联社最新的电报新闻",
+		},
+		withPanicRecovery("fetch_cailianshe_news", func(ctx context.Context, req *mcp.CallToolRequest, args FetchCailiansheNewsArgs) (*mcp.CallToolResult, any, error) {
+			argsMap := map[string]interface{}{
+				"limit": args.Limit,
+			}
+			result := appServer.handleFetchLatestNews(ctx, argsMap)
+			return convertToMCPResult(result), nil, nil
+		}),
+	)
+
+	// 工具 2: 搜索财联社新闻
+	mcp.AddTool(server,
+		&mcp.Tool{
+			Name:        "search_cailianshe_news",
+			Description: "根据关键词搜索财联社新闻",
+		},
+		withPanicRecovery("search_cailianshe_news", func(ctx context.Context, req *mcp.CallToolRequest, args SearchCailiansheNewsArgs) (*mcp.CallToolResult, any, error) {
+			argsMap := map[string]interface{}{
+				"keyword": args.Keyword,
+				"limit":   args.Limit,
+			}
+			result := appServer.handleSearchCailiansheNews(ctx, argsMap)
+			return convertToMCPResult(result), nil, nil
+		}),
+	)
+
+	// 工具 3: 启动定时任务
+	mcp.AddTool(server,
+		&mcp.Tool{
+			Name:        "start_cailianshe_scheduler",
+			Description: "启动财联社新闻定时获取任务，定期自动获取和分析最新新闻",
+		},
+		withPanicRecovery("start_cailianshe_scheduler", func(ctx context.Context, req *mcp.CallToolRequest, args StartCailiansheSchedulerArgs) (*mcp.CallToolResult, any, error) {
+			argsMap := map[string]interface{}{
+				"interval_minutes": args.IntervalMinutes,
+			}
+			result := appServer.handleStartCailiansheScheduler(ctx, argsMap)
+			return convertToMCPResult(result), nil, nil
+		}),
+	)
+
+	// 工具 4: 停止定时任务
+	mcp.AddTool(server,
+		&mcp.Tool{
+			Name:        "stop_cailianshe_scheduler",
+			Description: "停止财联社新闻定时获取任务",
+		},
+		withPanicRecovery("stop_cailianshe_scheduler", func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, any, error) {
+			result := appServer.handleStopCailiansheScheduler(ctx)
+			return convertToMCPResult(result), nil, nil
+		}),
+	)
+
+	// 工具 5: 获取定时任务状态
+	mcp.AddTool(server,
+		&mcp.Tool{
+			Name:        "get_cailianshe_scheduler_status",
+			Description: "获取财联社新闻定时任务的运行状态和缓存信息",
+		},
+		withPanicRecovery("get_cailianshe_scheduler_status", func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, any, error) {
+			result := appServer.handleGetCailiansheSchedulerStatus(ctx)
+			return convertToMCPResult(result), nil, nil
+		}),
+	)
+
+	// 工具 6: 获取缓存的新闻
+	mcp.AddTool(server,
+		&mcp.Tool{
+			Name:        "get_cached_cailianshe_news",
+			Description: "获取已缓存的财联社新闻（来自定时任务）",
+		},
+		withPanicRecovery("get_cached_cailianshe_news", func(ctx context.Context, req *mcp.CallToolRequest, args FetchCailiansheNewsArgs) (*mcp.CallToolResult, any, error) {
+			argsMap := map[string]interface{}{
+				"limit": args.Limit,
+			}
+			result := appServer.handleGetCachedCailiansheNews(ctx, argsMap)
+			return convertToMCPResult(result), nil, nil
+		}),
+	)
+
+	logrus.Infof("Registered %d Cailianshe MCP tools", 6)
 }
